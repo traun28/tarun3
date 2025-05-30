@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gym Tracking System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            background-color: #f3f4f6; /* Light gray background */
+        }
+        /* Custom styles for better aesthetics and responsiveness */
+        .rounded-lg { border-radius: 0.5rem; }
+        .shadow-lg { box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05); }
+        .focus\:ring-blue-500:focus { outline: none; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.5); }
+        .transition-all { transition-property: all; transition-duration: 300ms; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import {
+            getAuth,
+            signInAnonymously,
+            signInWithCustomToken,
+            onAuthStateChanged,
+            createUserWithEmailAndPassword,
+            signInWithEmailAndPassword,
+            signOut
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import {
+            getFirestore,
+            collection,
+            addDoc,
+            query,
+            where,
+            onSnapshot,
+            serverTimestamp,
+            orderBy
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables provided by the Canvas environment or default values for local testing
+        const __app_id = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const __firebase_config = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const __initial_auth_token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // --- Firebase Context ---
+        const FirebaseContext = React.createContext(null);
+
+        // Firebase Provider component to initialize Firebase and manage auth state
+        const FirebaseProvider = ({ children }) => {
+            const [app, setApp] = React.useState(null);
+            const [db, setDb] = React.useState(null);
+            const [auth, setAuth] = React.useState(null);
+            const [currentUser, setCurrentUser] = React.useState(null);
+            const [isAuthReady, setIsAuthReady] = React.useState(false);
+            const [userId, setUserId] = React.useState(null);
+
+            React.useEffect(() => {
+                try {
+                    // Initialize Firebase app with provided config
+                    const firebaseApp = initializeApp(__firebase_config);
+                    setApp(firebaseApp);
+                    setDb(getFirestore(firebaseApp));
+                    setAuth(getAuth(firebaseApp));
+                } catch (error) {
+                    console.error("Failed to initialize Firebase:", error);
+                }
+            }, []);
+
+            React.useEffect(() => {
+                if (auth) {
+                    // Listen for authentication state changes
+                    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+                        if (user) {
+                            setCurrentUser(user);
+                            setUserId(user.uid);
+                        } else {
+                            setCurrentUser(null);
+                            setUserId(null);
+                            // Sign in anonymously if no custom token is provided
+                            if (!__initial_auth_token) {
+                                try {
+                                    await signInAnonymously(auth);
+                                } catch (error) {
+                                    console.error("Failed to sign in anonymously:", error);
+                                }
+                            }
+                        }
+                        setIsAuthReady(true); // Auth state is ready after initial check
+                    });
+
+                    // Attempt to sign in with custom token if available
+                    const signInWithToken = async () => {
+                        if (__initial_auth_token && auth) {
+                            try {
+                                await signInWithCustomToken(auth, __initial_auth_token);
+                            } catch (error) {
+                                console.error("Failed to sign in with custom token:", error);
+                                // Fallback to anonymous sign-in if custom token fails
+                                try {
+                                    await signInAnonymously(auth);
+                                } catch (anonError) {
+                                    console.error("Failed to sign in anonymously after custom token failure:", anonError);
+                                }
+                            }
+                        }
+                    };
+
+                    signInWithToken();
+
+                    return () => unsubscribe(); // Cleanup auth listener
+                }
+            }, [auth]);
+
+            const value = { app, db, auth, currentUser, isAuthReady, userId };
+
+            return (
+                <FirebaseContext.Provider value={value}>
+                    {children}
+                </FirebaseContext.Provider>
+            );
+        };
+
+        // Custom hook to use Firebase services
+        const useFirebase = () => {
+            return React.useContext(FirebaseContext);
+        };
+
+        // --- Auth Components ---
+        const AuthScreen = () => {
+            const { auth } = useFirebase();
+            const [isLogin, setIsLogin] = React.useState(true);
+            const [email, setEmail] = React.useState('');
+            const [password, setPassword] = React.useState('');
+            const [error, setError] = React.useState('');
+            const [message, setMessage] = React.useState('');
+
+            const handleAuth = async (e) => {
+                e.preventDefault();
+                setError('');
+                setMessage('');
+
+                if (!auth) {
+                    setError("Firebase Auth not initialized.");
+                    return;
+                }
+
+                try {
+                    if (isLogin) {
+                        await signInWithEmailAndPassword(auth, email, password);
+                        setMessage("Signed in successfully!");
+                    } else {
+                        await createUserWithEmailAndPassword(auth, email, password);
+                        setMessage("Account created successfully! You are now signed in.");
+                    }
+                } catch (err) {
+                    console.error("Auth error:", err);
+                    setError(err.message);
+                }
+            };
+
+            return (
+                <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
+                    <div className="bg-white p-8 rounded-lg shadow-lg w-full max-w-md">
+                        <h2 className="text-3xl font-bold text-center mb-6 text-gray-800">
+                            {isLogin ? 'Sign In' : 'Sign Up'}
+                        </h2>
+                        <form onSubmit={handleAuth} className="space-y-4">
+                            <div>
+                                <label className="block text-gray-700 text-sm font-semibold mb-2" htmlFor="email">
+                                    Email
+                                </label>
+                                <input
+                                    type="email"
+                                    id="email"
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="your.email@example.com"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    required
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-gray-700 text-sm font-semibold mb-2" htmlFor="password">
+                                    Password
+                                </label>
+                                <input
+                                    type="password"
+                                    id="password"
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="********"
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    required
+                                />
+                            </div>
+                            {error && <p className="text-red-600 text-sm">{error}</p>}
+                            {message && <p className="text-green-600 text-sm">{message}</p>}
+                            <button
+                                type="submit"
+                                className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                            >
+                                {isLogin ? 'Sign In' : 'Sign Up'}
+                            </button>
+                        </form>
+                        <p className="mt-6 text-center text-gray-600">
+                            {isLogin ? "Don't have an account?" : "Already have an account?"}{' '}
+                            <button
+                                onClick={() => setIsLogin(!isLogin)}
+                                className="text-blue-600 hover:underline font-semibold focus:outline-none"
+                            >
+                                {isLogin ? 'Sign Up' : 'Sign In'}
+                            </button>
+                        </p>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Workout Tracking Components ---
+        const WorkoutTracker = () => {
+            const { db, auth, currentUser, isAuthReady, userId } = useFirebase();
+            const [exerciseName, setExerciseName] = React.useState('');
+            const [sets, setSets] = React.useState('');
+            const [reps, setReps] = React.useState('');
+            const [weight, setWeight] = React.useState('');
+            const [workouts, setWorkouts] = React.useState([]);
+            const [error, setError] = React.useState('');
+            const [message, setMessage] = React.useState('');
+
+            const appId = __app_id; // Using the global __app_id
+
+            // Fetch workouts when auth state is ready and user is logged in
+            React.useEffect(() => {
+                if (db && isAuthReady && currentUser) {
+                    const workoutsCollectionRef = collection(db, `artifacts/${appId}/users/${currentUser.uid}/workouts`);
+                    const q = query(workoutsCollectionRef, orderBy('date', 'desc'));
+
+                    const unsubscribe = onSnapshot(q, (snapshot) => {
+                        const workoutsData = snapshot.docs.map(doc => ({
+                            id: doc.id,
+                            ...doc.data()
+                        }));
+                        setWorkouts(workoutsData);
+                    }, (err) => {
+                        console.error("Error fetching workouts:", err);
+                        setError("Failed to load workouts.");
+                    });
+
+                    return () => unsubscribe();
+                } else if (isAuthReady && !currentUser) {
+                    setWorkouts([]); // Clear workouts if user logs out
+                }
+            }, [db, isAuthReady, currentUser, appId]);
+
+            const handleAddWorkout = async (e) => {
+                e.preventDefault();
+                setError('');
+                setMessage('');
+
+                if (!db || !currentUser) {
+                    setError("Please sign in to add workouts.");
+                    return;
+                }
+
+                if (!exerciseName || !sets || !reps || !weight) {
+                    setError("Please fill in all workout fields.");
+                    return;
+                }
+
+                try {
+                    const workoutsCollectionRef = collection(db, `artifacts/${appId}/users/${currentUser.uid}/workouts`);
+                    await addDoc(workoutsCollectionRef, {
+                        exerciseName: exerciseName.trim(),
+                        sets: parseInt(sets),
+                        reps: parseInt(reps),
+                        weight: parseFloat(weight),
+                        date: serverTimestamp() // Use server timestamp for consistent ordering
+                    });
+                    setMessage("Workout added successfully!");
+                    setExerciseName('');
+                    setSets('');
+                    setReps('');
+                    setWeight('');
+                } catch (err) {
+                    console.error("Error adding workout:", err);
+                    setError("Failed to add workout. Please try again.");
+                }
+            };
+
+            const handleSignOut = async () => {
+                if (auth) {
+                    try {
+                        await signOut(auth);
+                        setMessage("Signed out successfully.");
+                    } catch (err) {
+                        console.error("Error signing out:", err);
+                        setError("Failed to sign out.");
+                    }
+                }
+            };
+
+            if (!isAuthReady) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-gray-100">
+                        <div className="text-lg font-semibold text-gray-700">Loading...</div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen bg-gray-100 p-4 font-sans flex flex-col items-center">
+                    <header className="w-full max-w-4xl bg-white p-6 rounded-lg shadow-md mb-6 flex justify-between items-center">
+                        <h1 className="text-4xl font-extrabold text-gray-900">Gym Tracker</h1>
+                        {currentUser && (
+                            <div className="flex items-center space-x-4">
+                                <span className="text-gray-700 text-sm">User ID: <span className="font-mono text-blue-600 break-all">{userId}</span></span>
+                                <button
+                                    onClick={handleSignOut}
+                                    className="bg-red-500 text-white py-2 px-4 rounded-md hover:bg-red-600 transition duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+                                >
+                                    Sign Out
+                                </button>
+                            </div>
+                        )}
+                    </header>
+
+                    {currentUser ? (
+                        <div className="w-full max-w-4xl flex flex-col lg:flex-row gap-6">
+                            {/* Add Workout Form */}
+                            <div className="bg-white p-6 rounded-lg shadow-md lg:w-1/3">
+                                <h2 className="text-2xl font-bold text-gray-800 mb-4">Add New Workout</h2>
+                                <form onSubmit={handleAddWorkout} className="space-y-4">
+                                    <div>
+                                        <label className="block text-gray-700 text-sm font-semibold mb-2" htmlFor="exerciseName">
+                                            Exercise Name
+                                        </label>
+                                        <input
+                                            type="text"
+                                            id="exerciseName"
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            placeholder="e.g., Bench Press"
+                                            value={exerciseName}
+                                            onChange={(e) => setExerciseName(e.target.value)}
+                                            required
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-gray-700 text-sm font-semibold mb-2" htmlFor="sets">
+                                            Sets
+                                        </label>
+                                        <input
+                                            type="number"
+                                            id="sets"
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            placeholder="e.g., 3"
+                                            value={sets}
+                                            onChange={(e) => setSets(e.target.value)}
+                                            min="1"
+                                            required
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-gray-700 text-sm font-semibold mb-2" htmlFor="reps">
+                                            Reps
+                                        </label>
+                                        <input
+                                            type="number"
+                                            id="reps"
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            placeholder="e.g., 8"
+                                            value={reps}
+                                            onChange={(e) => setReps(e.target.value)}
+                                            min="1"
+                                            required
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-gray-700 text-sm font-semibold mb-2" htmlFor="weight">
+                                            Weight (kg/lbs)
+                                        </label>
+                                        <input
+                                            type="number"
+                                            id="weight"
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            placeholder="e.g., 100"
+                                            value={weight}
+                                            onChange={(e) => setWeight(e.target.value)}
+                                            min="0"
+                                            step="0.1"
+                                            required
+                                        />
+                                    </div>
+                                    {error && <p className="text-red-600 text-sm">{error}</p>}
+                                    {message && <p className="text-green-600 text-sm">{message}</p>}
+                                    <button
+                                        type="submit"
+                                        className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                                    >
+                                        Add Workout
+                                    </button>
+                                </form>
+                            </div>
+
+                            {/* Workout History */}
+                            <div className="bg-white p-6 rounded-lg shadow-md lg:w-2/3">
+                                <h2 className="text-2xl font-bold text-gray-800 mb-4">Workout History</h2>
+                                {workouts.length === 0 ? (
+                                    <p className="text-gray-600">No workouts logged yet. Add your first workout!</p>
+                                ) : (
+                                    <div className="space-y-4">
+                                        {workouts.map((workout) => (
+                                            <div key={workout.id} className="border border-gray-200 p-4 rounded-md bg-gray-50">
+                                                <p className="text-lg font-semibold text-gray-800">{workout.exerciseName}</p>
+                                                <p className="text-gray-700">Sets: {workout.sets}, Reps: {workout.reps}, Weight: {workout.weight}</p>
+                                                <p className="text-gray-500 text-sm">
+                                                    Date: {workout.date ? new Date(workout.date.toDate()).toLocaleString() : 'Loading...'}
+                                                </p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    ) : (
+                        <AuthScreen />
+                    )}
+                </div>
+            );
+        };
+
+        // Main App component
+        const App = () => {
+            return (
+                <FirebaseProvider>
+                    <WorkoutTracker />
+                </FirebaseProvider>
+            );
+        };
+
+        // Render the React App component into the 'root' div
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
+
