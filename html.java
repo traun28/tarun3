@@ -181,4 +181,43 @@ public class GymTracker {
         app.run();
     }
 }
+/ Workout.java
+// Represents a single workout entry with exercise details and a timestamp.
+class Workout {
+    private String exerciseName;
+    private int sets;
+    private int reps;
+    private double weight; // Weight in kg or lbs
+    private Date date;
+
+    // Constructor to initialize a new Workout object.
+    public Workout(String exerciseName, int sets, int reps, double weight) {
+        this.exerciseName = exerciseName;
+        this.sets = sets;
+        this.reps = reps;
+        this.weight = weight;
+        this.date = new Date(); // Automatically set the current date/time
+    }
+
+    // Getter for exercise name.
+    public String getExerciseName() {
+        return exerciseName;
+    }
+
+    // Getter for sets.
+    public int getSets() {
+        return sets;
+    }
+
+    // Getter for reps.
+    public int getReps() {
+        return reps;
+    }
+
+    // Getter for weight.
+    public double getWeight() {
+        return weight;
+    }
+
+    // Getter for the workout date.
 
